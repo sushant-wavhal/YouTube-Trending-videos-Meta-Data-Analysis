@@ -1,0 +1,370 @@
+---
+title: "Youtube metadata"
+author: "Vaibhav"
+date: "November 28, 2018"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### DATA PRE-PROCESSING
+###Transforming our variables
+### 1- Frequency 
+### 2- Dislike Percentage
+### 3- Trending Days
+### 4- Views Ratio
+
+### The objective is to form a table of unique values based on video_id and append 4 
+### columns with variables for the above attributes [1-4]
+
+
+###Forming the table with unique values based on video_id such each video will have 
+### just one row with the latest trending date
+###taking in account maximum likes, dislikes and comments
+
+
+
+
+```{r}
+
+library(dplyr)
+library(caret)
+library(tidyverse)
+library(forecast)
+library(leaps)
+
+
+# Reading the dataset
+df <- read.csv('CAvideos.csv')
+# Sorting as per 'video_id'
+dfsort <- arrange(df,video_id)
+
+```
+
+###Assigning categories to the videos
+
+
+
+###library(plyr)
+###library(RJSONIO)
+###json_file <- json_file <- fromJSON('CA_category_id.json')
+###con <- file('CA_category_id.json', "r")
+###df  <- ldply(fromJSON(con), data.frame)
+###close(con)
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+
+dfsort$category_id <- ordered(dfsort$category_id,
+levels = c(1, 2, 10, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 34,
+           35, 36, 37, 39, 40, 41, 42, 43, 44, 38),
+labels = c("Film & Animation", "Autos & Vehicles", "Music", "Pets & Animals", "Sports", "Short Movies", 
+            "Travel & Events", "Gaming", "Videoblogging", "People & Blogs", "Comedy", "Entertainment", 
+            "News & Politics", "Howto & Style",  "Education", "Science & Technology", "Movies", 
+           "Anime/Animation", "Action/Adventure", "Classics", "Comedy", "Documentary", "Drama", 
+          "Family","Horror", "Sci-Fi/Fantasy", "Thriller", "Shorts", "Shows", "Trailers", "Foreign"))
+View(dfsort)
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+###changing the column name of category id to category
+```{r, echo=FALSE}
+
+colnames(dfsort)[5] <- "category"
+
+```
+
+
+### Extracting unique values from sorted dataset
+```{r, echo=FALSE}
+
+
+dfnew <- dfsort[order(dfsort$video_id, -abs(dfsort$likes), -abs(dfsort$dislikes), -abs(dfsort$comment_count)), ] 
+videoUniq <-  dfnew[ !duplicated(dfnew$video_id), ] 
+
+
+```
+
+### 1- Frequency of a video [No. of times it trended]
+```{r, echo=FALSE}
+freq.df = count(df, df$video_id)
+videoUniq['frequency'] <- freq.df$n 
+```
+#----------------------------------------------------------------------------------#
+
+
+
+### 2- Dislike Percentage for each video
+```{r, echo=FALSE}
+videoUniq['dislike_percent'] <-  (videoUniq$dislikes) / (videoUniq$likes + videoUniq$dislikes)
+``` 
+#----------------------------------------------------------------------------------#
+
+### 3- Days to Trending for each video
+
+# Separating 'trending_date' and 'publish_time' into 2 different columns
+```{r, echo=FALSE}
+y.df <- videoUniq[2]
+x.df <- videoUniq[6]
+
+View(y.df)
+View(x.df)
+```
+### Extracting the date from column 'publish_time' 
+###x.df %>%
+
+```{r, echo=FALSE}
+x.df <- mutate(x.df, publish_time = as.Date(substr(publish_time, 1, 10)))
+```
+### Converting the date-format of 'trending_date' from yyddmm to yymmdd
+###y.df %>%
+
+```{r, echo=FALSE}
+y.df <-  mutate(y.df, trending_date= as.Date(trending_date, format = "%y.%d.%m"))
+
+View(y.df)
+View(x.df)
+```
+
+### Combining the new dates into one single dataframe
+```{r, echo=FALSE}
+z.df <- videoUniq[1]
+z.df['date_of_publishing'] <- x.df$publish_time
+z.df['date_of_trending'] <- y.df$trending_date
+
+View(z.df)
+
+```
+
+# Finding the number of days between the 2 dates
+```{r, echo=FALSE}
+z.df <- mutate(z.df, No_of_days= as.numeric(date_of_trending-date_of_publishing, units = "days") )
+
+View(z.df)
+```
+# So, 'z.df' is the dataframe with the columns that can be added to our original dataset
+
+```{r, echo=FALSE} 
+videoUniq ['date_of_publishing'] <- z.df$date_of_publishing
+videoUniq ['date_of_trending'] <- z.df$date_of_trending
+videoUniq ['days_to_trend'] <- z.df$No_of_days
+```
+#drpping the original trending date column and publish time
+```{r, echo=FALSE}
+videoUniq <- videoUniq[,-c(2)]
+videoUniq <- videoUniq[,-c(5)]
+View(videoUniq)
+```
+
+
+
+# Selecting variables for regression
+```{r, echo=FALSE}
+videoRegVar.df <- videoUniq[, c(6,7,8,9,15,16,19)]
+```
+# Data partition
+
+```{r, echo=FALSE}
+set.seed(123)
+training.index <- createDataPartition(videoRegVar.df$days_to_trend, p = 0.9, list = FALSE)
+videoReg.train.df <- videoRegVar.df[training.index, ]
+videoReg.valid.df <- videoRegVar.df[-training.index, ]
+```
+### Run regression
+```{r, echo=TRUE}
+video.lm <- lm(days_to_trend ~ ., data = videoReg.train.df)
+
+options(scipen = 999)
+summary(video.lm)
+```
+
+
+
+###VISUALIZATIONS
+###Most influential creators
+
+```{r, echo=TRUE}
+creators.df <- table(videoUniq$channel_title)
+
+barchart(head(sort(creators.df, decreasing = TRUE),15))
+```
+
+##Video Category Distribution
+```{r, echo=TRUE}
+videoUniq$category_id <- ordered(videoUniq$category)
+                            
+barchart(table(videoUniq$category))
+```
+
+##Time Series Analysis (number of Views over year)
+```{r, echo=TRUE}
+view.ts <- ts(videoUniq$views, start = c(2017, 1), end = c(2018, 6), freq = 12)
+plot(view.ts, xlab = "Year", ylab = "Views on Youtube Videos")
+```
+##Time Series Analysis (number of likes over year)
+```{r, echo=TRUE}
+like.ts <- ts(videoUniq$likes, start = c(2017, 1), end = c(2018, 6), freq = 12)
+plot(like.ts, xlab = "Year", ylab = "Likes on Youtube Videos")
+```
+##Time Series Analysis (number of dislikes over year)
+
+```{r, echo=TRUE}
+dislike.ts <- ts(videoUniq$dislikes, start = c(2017, 1), end = c(2018, 3), freq = 12)
+plot(dislike.ts, xlab = "Year", ylab = "Dislikes on Youtube Videos")
+```
+## Scatter plot to find out correlation between likes and views for videos
+```{r, echo=TRUE}
+ggplot(videoUniq) + 
+  geom_point(aes(x = views, y = likes), color = "navy", alpha = .7) +
+  theme_classic()
+```
+
+##Days to trending status
+```{r, echo=TRUE}
+barchart(table(videoUniq$days_to_trend))
+```
+# Filled Density Plot (Distribution for dislike percentage)
+
+```{r, echo=TRUE}
+ggplot(videoUniq, aes(x=dislike_percent)) + 
+  geom_histogram(aes(y=..density..),      
+                 binwidth=.5,
+                 colour="black") +
+  geom_density(alpha=.2, fill="#FF6666") 
+```
+## Not Instant Hits : Success by dislike percentage
+
+```{r, echo=TRUE}
+ggplot(videoUniq) + 
+  geom_point(aes(x = likes, y = dislikes), color = "navy", alpha = .7) +
+  theme_classic()
+```
+
+
+
+#Data Mining and sentiment analysis
+```{r, echo=FALSE}
+video_uniq_mine <- head(videoUniq,5000)
+
+library(tidyverse)
+library(tidytext)
+library(glue)
+library(stringr)
+library(SnowballC)
+library(tm)
+library(NLP)
+library(wordcloud)
+library(wordcloud2)
+library(gridExtra) #viewing multiple plots together
+library(RColorBrewer)
+```
+
+
+```{r, echo=FALSE}
+video_uniq_mine <- head(videoUniq$tags,5000)
+str_replace_all(video_uniq_mine, "[^[:alnum:]]", " ")
+video_uniq_mine <- iconv(video_uniq_mine, 'UTF-8', 'ASCII')
+corpus <- Corpus(VectorSource(video_uniq_mine))
+inspect(corpus[1:5])
+```
+
+# Convert the text to lower case
+
+```{r, echo=FALSE}
+corpus <- tm_map(corpus, tolower)
+```
+# Remove punctuations
+
+```{r, echo=FALSE}
+corpus <- tm_map(corpus, removePunctuation)
+```
+# Remove numbers
+
+```{r, echo=FALSE}
+corpus <- tm_map(corpus, removeNumbers)
+```
+# Remove english stopwords
+
+```{r, echo=FALSE}
+cleanset <- tm_map(corpus, removeWords, stopwords('english'))
+```
+# Remove URL and foreign language urls'
+
+```{r, echo=FALSE}
+removeURL <- function(x) gsub('http[[:alnum:]]*', '', x)
+cleanset <- tm_map(cleanset, content_transformer(removeURL))
+```
+# Eliminate extra white spaces
+# Remove additional stopwords
+
+```{r, echo=FALSE}
+cleanset <- tm_map(cleanset, stripWhitespace)
+cleanset <- tm_map(cleanset, removeWords, c('ã~â','ãTâ???','ã\u0090â','ãTâ???zã~â','ãTå','ãTë','â\u0081ã',
+                                            'noahã','â???zã','â???~ã','ãTâ???z','â\u008dã','ùsø','ù^ø','ùfø','ùsù',
+                                            'ù^ù','ñ???ð','ù\u0081ø','ùsù^ø','ñ\u0081ð','ûoø','ù\u0081ùsø',
+                                            'noahå','ùfù','ukur','~çs','ù\u0081ù','noahé','æzoç^','ù^ù\u0081ø',
+                                            'espnespn','ñoð','ùsù^ù','è\u0081zå','ñfð','â???\u009d'))
+```
+
+
+
+
+# Text stemming (reduces words to their root form)
+```{r, echo=FALSE}
+cleanset <- tm_map(cleanset, stemDocument)
+```
+
+View(cleanset)
+```{r, echo=FALSE}
+inspect(cleanset[1:10])
+
+
+dtm <- TermDocumentMatrix(cleanset)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+head(d, 200)
+```
+# Generate the WordCloud
+```{r, echo=FALSE}
+par(bg='mistyrose')
+png(file="WordCloud.png",width=1000,height=1000, bg="grey30")
+wordcloud(d$word, d$freq, max.words = 200, col=terrain.colors(length(d$word), alpha=0.9),
+           random.order=FALSE, rot.per=0.3 )
+```
+#wordcloud(words = d$word, freq = d$freq, min.freq = 1,
+# max.words=200, random.order=FALSE, rot.per=0.35, 
+# colors=brewer.pal(8, "Dark2"))
+
+```{r, echo=FALSE}
+title(main = "Most words in tags", font.main = 1, col.main = "cornsilk3", cex.main = 1.5)
+dev.off()
+```
+
+
+#finding frequency of words
+```{r, echo=FALSE}
+findFreqTerms(dtm, lowfreq = 4)
+```
+#finding association between frequent terms
+```{r, echo=FALSE}
+findAssocs(dtm, terms = "beautiful", corlimit = 0.3)
+```
+#barplot of different words with frequency
+```{r, echo=FALSE}
+barplot(d[1:10,]$freq, las = 2, names.arg = d[1:10,]$word,
+        col ="lightblue", main ="Most frequent words",
+        ylab = "Word frequencies")
+```
+
+
